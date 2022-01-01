@@ -3,7 +3,7 @@ Description:
 Author: daoyi
 Date: 2021-12-03 21:00:09
 LastEditors: daoyi
-LastEditTime: 2021-12-07 02:07:06
+LastEditTime: 2021-12-08 02:21:17
 '''
 #-*- coding : utf-8 -*-
 # coding: unicode_escape
@@ -24,9 +24,10 @@ from win32com.client import Dispatch
 from copy import deepcopy
 from pathlib import Path
 import datetime
-import os
+import os, sys
 import json
 import random
+from interval import Interval
 
 from gooey import Gooey, GooeyParser
 import argparse
@@ -36,7 +37,7 @@ import logging
 
 # %(filename)s [line:%(lineno)d] \
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] \
-[%(levelname)s] : %(message)s',  datefmt='%Y-%m-%d(%a) %H:%M:%S')
+[line:%(lineno)d] [%(levelname)s] : %(message)s',  datefmt='%Y-%m-%d(%a) %H:%M:%S')
 
 CURRENT_PATH= os.getcwd()   # str
 logging.info(f'working directory ==>> {CURRENT_PATH}')
@@ -80,7 +81,7 @@ def docx_to_pdf(source_file: str, output_file: str):
     word.Quit()
 
 # @snp.snoop(depth=1, prefix="handle: ")
-def sort_table(xlsfile, customer) -> list:
+def sort_table(xlsfile, customer, start_date, end_date) -> list:
     workbook = xw.Book(xlsfile)
 
     sheets_list = workbook.sheets
@@ -88,13 +89,17 @@ def sort_table(xlsfile, customer) -> list:
     select_custom = customer
     select_attribute = '销售'
     new_sheet = workbook.sheets.add(select_custom)
+    select_interval = Interval(
+        datetime.datetime.strptime(start_date, '%Y-%m-%d'), 
+        datetime.datetime.strptime(end_date, '%Y-%m-%d')
+        )
 
     range_value_list = []
     def readrange(sheet, nrows):
-        logging.info('Organize Sheet Data ==>> Waiting...')
-        for i in range(1, nrows):
+        for i in range(2, nrows):
             #单个表格字符串
             # sheet_sale = "L"+str(i)
+            sheet_date = "G"+str(i)
             sheet_custome = "I"+str(i)
             sheet_attribure = "J"+str(i)
 
@@ -102,19 +107,41 @@ def sort_table(xlsfile, customer) -> list:
             select_sheet = "F"+str(i)+":"+"L"+str(i)
 
             # select_sheet_sale = sheet.range(sheet_sale).value
+            select_sheet_date = sheet.range(sheet_date).value
             select_sheet_custome = sheet.range(sheet_custome).value
             select_sheet_attribute = sheet.range(sheet_attribure).value
 
-                # select_sheet_sale == select_sale and \
+            logging.debug(type(select_sheet_date))
+            logging.debug(type(select_interval))
+
+            if select_sheet_date in select_interval and \
+               select_sheet_custome == select_custom and \
+               select_sheet_attribute == select_attribute:
+                str_value_row = sheet.range(select_sheet).value
+                range_value_list.append(str_value_row) 
+
+    def readrange_default(sheet, nrows):
+        for i in range(2, nrows):
+            sheet_custome = "I"+str(i)
+            sheet_attribure = "J"+str(i)
+
+            select_sheet = "F"+str(i)+":"+"L"+str(i)
+
+            select_sheet_custome = sheet.range(sheet_custome).value
+            select_sheet_attribute = sheet.range(sheet_attribure).value
+
             if select_sheet_custome == select_custom and \
                 select_sheet_attribute == select_attribute:
                 str_value_row = sheet.range(select_sheet).value
                 range_value_list.append(str_value_row) 
-    
+
+
     for sheet in sheets_list:
         rng = sheet.range('a1').expand('table')
         nrows = rng.rows.count
-        readrange(sheet, nrows)
+        logging.info('Organize Sheet Data ==>> Waiting...')
+        readrange_default(sheet, nrows) if start_date == DATE and end_date == DATE \
+            else readrange(sheet, nrows)
 
     new_sheet.range("A1:G1").value = ["主机序列号","出库日期","出库单号","客户名称","出货属性","订单号","经手人"]
     row_num = 1
@@ -123,13 +150,16 @@ def sort_table(xlsfile, customer) -> list:
         new_sheet_row = "A"+str(row_num)+":"+"G"+str(row_num)
         new_sheet.range(new_sheet_row).value = row
         logging.info(f'Write Sheet<{select_custom}> ==>> ' + f'{len(range_value_list)}' + '/' + f'{row_num-1}')
-    
+
     ## -------------------------------------------
     sht = workbook.sheets(select_custom)
     info = sht.used_range
     nrows = info.last_cell.row
     ncolumns = info.last_cell.column
     logging.info(f'total rows: {nrows}\n')
+    if nrows == 1:
+        logging.info("error, no select data, please set again.")
+        sys.exit()
 
     psnlist = sht.range(f'a1:a{nrows}').value
     datelist= sht.range(f'b1:b{nrows}').value
@@ -151,20 +181,21 @@ def handle(data_list, save_folder, file_name_formate):
             "TR529":"WEA-852",
             "T5DB6":"PAC-8581"
         }
-        
+
     num = 1
     # custome_type = match[psn[:5]] if psn[:5] in match.keys() else continue
     data = data_list[1:]
     for psn, date in data:
+        logging.debug(date)
         date = date.strftime('%Y-%m-%d')
         if psn[:5] in match.keys():
             custome_type = match[psn[:5]]
         else:
             continue
-        
-        template = CURRENT_PATH + "/userspace/template/" + custome_type + ".docx"
+
+        template = USERSPACE_PATH + "template/" + custome_type + ".docx"
         if not os.path.exists(template):
-            template = CURRENT_PATH + "/userspace/template/" + "template.docx"
+            template = USERSPACE_PATH + "template/" + "template.docx"
 
         wordfile = Document(template)
         wordfile_copy = deepcopy(wordfile)  # 防止原文件被篡改，deepcopy 
@@ -190,22 +221,21 @@ def handle(data_list, save_folder, file_name_formate):
         posiy = random.randint(16, 20)   # better 18
         add_float_picture(
             par, 
-            CURRENT_PATH + '/userspace/template/signature.png', 
+            USERSPACE_PATH + 'template/signature.png', 
             width=Inches(2.5), 
             pos_x=Cm(posix), 
             pos_y=Cm(posiy)
         )
-        
+
         wordfile_copy.save(f'{save_folder}/{psn}.docx') if file_name_formate == "PSN" \
-            else wordfile_copy.save(f'{save_folder}/{custome_type}@{psn}.docx')            
+            else wordfile_copy.save(f'{save_folder}/{custome_type}@{psn}.docx')
         logging.info('outputdocx ==>> ' + f'{len(data)}' + '/' + f'{num}')
         num = num +1
     logging.info('outputdocx =======>> ' + f'{len(data) - num + 1}' + " files not contained.") 
 
 # @snp.snoop(depth=1, prefix="inspection: ")
-def custom_inspection(file, customer, file_name_formate):
+def custom_inspection(file, customer, file_name_formate, start_date, end_date):
 
-    # xlsfile = CURRENT_PATH + "/userspace/" + "psn.xlsx" if not file else file
     # xlsfile = enum_file(USERSPACE_PATH, '.xlsx')[0] if not file else file
     try:
         xlsfile = USERSPACE_PATH + enum_file(USERSPACE_PATH, '.xlsx')[0] if not os.path.exists(file) else file
@@ -216,7 +246,7 @@ def custom_inspection(file, customer, file_name_formate):
 
     save_docx_folder = Path(USERSPACE_PATH + f'{DATE}@outputdocx')
     save_docx_folder.mkdir(parents=True, exist_ok=True)
-    handle(sort_table(xlsfile, customer), save_docx_folder, file_name_formate)
+    handle(sort_table(xlsfile, customer, start_date, end_date), save_docx_folder, file_name_formate)
     docx_list = enum_file(save_docx_folder, ".docx")
     logging.debug(docx_list)
 
@@ -248,7 +278,8 @@ def main():
     parser = GooeyParser(description="根据模板自动生成客户质检单\n<whshi@techyauld.com>")
     parser.add_argument('Customer', help="选择客户", default="许继软件")
     parser.add_argument('FileName', help="保存文件名", widget="Dropdown", choices=['PSN','TYPE@PSN'], default="TYPE@PSN") 
-    parser.add_argument('Date', help="选择日期", widget="DateChooser", default=f'{DATE}')
+    parser.add_argument('StartDate', help="开始日期", widget="DateChooser", default=f'{DATE}')
+    parser.add_argument('EndDate', help="截止日期", widget="DateChooser", default=f'{DATE}')
     parser.add_argument('Path', help="文件路径", widget="FileChooser", default="userspace/psn.xlsx (default)") 
 
     args = parser.parse_args()          # 接收界面传递的参数
@@ -261,7 +292,14 @@ def main():
     # --------------------------------------------------------------------
 
     logging.debug(f'parse args: {args.FileName}')
-    custom_inspection(args.Path, args.Customer, args.FileName)
+    logging.debug(type(args.StartDate))
+    custom_inspection(
+        args.Path, 
+        args.Customer, 
+        args.FileName, 
+        args.StartDate,
+        args.EndDate
+        )
 
 
 if __name__ == "__main__":
