@@ -1,6 +1,7 @@
+/inspection/__pycache__/
 /inspection/build/ 
 /inspection/dist/ 
-/inspection/inspectPro.py
-/inspection/__pycache__/
 /inspection/inspection.spec
+/inspection/inspectionPro.spec
 /inspection/userspace
+/IOTbackup/
